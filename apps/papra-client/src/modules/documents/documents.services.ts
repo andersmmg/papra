@@ -232,3 +232,27 @@ export async function updateDocument({
     },
   };
 }
+
+export async function updateDocumentContent({
+  documentId,
+  organizationId,
+  content,
+}: {
+  documentId: string;
+  organizationId: string;
+  content: string;
+}) {
+  const { document } = await apiClient<{ document: Document }>({
+    method: 'PUT',
+    path: `/api/organizations/${organizationId}/documents/${documentId}/content`,
+    body: { content },
+  });
+
+  return {
+    document: {
+      ...document,
+      createdAt: new Date(document.createdAt),
+      updatedAt: document.updatedAt ? new Date(document.updatedAt) : undefined,
+    },
+  };
+}

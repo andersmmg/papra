@@ -10,6 +10,8 @@ import { Alert } from '@/modules/ui/components/alert';
 import { Button } from '@/modules/ui/components/button';
 import { Separator } from '@/modules/ui/components/separator';
 import { createToast } from '@/modules/ui/components/sonner';
+import { Tabs, TabsContent, TabsIndicator, TabsList, TabsTrigger } from '@/modules/ui/components/tabs';
+import { TextArea } from '@/modules/ui/components/textarea';
 import { TextField, TextFieldRoot } from '@/modules/ui/components/textfield';
 import { formatBytes } from '@corentinth/chisels';
 import { useNavigate, useParams } from '@solidjs/router';
@@ -19,7 +21,7 @@ import { createSignal } from 'solid-js';
 import { DocumentPreview } from '../components/document-preview.component';
 import { getDaysBeforePermanentDeletion } from '../document.models';
 import { useDeleteDocument, useRestoreDocument } from '../documents.composables';
-import { fetchDocument, fetchDocumentFile, updateDocument } from '../documents.services';
+import { fetchDocument, fetchDocumentFile, updateDocument, updateDocumentContent } from '../documents.services';
 import '@pdfslick/solid/dist/pdf_viewer.css';
 
 type KeyValueItem = {
@@ -55,10 +57,13 @@ export const DocumentPage: Component = () => {
   const { restore, getIsRestoring } = useRestoreDocument();
   const navigate = useNavigate();
   const { config } = useConfig();
-  const [isEditing, setIsEditing] = createSignal(false);
+  const [isEditingName, setIsEditingName] = createSignal(false);
   const [editName, setEditName] = createSignal('');
+  const [isEditingContent, setIsEditingContent] = createSignal(false);
+  const [editedContent, setEditedContent] = createSignal('');
+  const [isSaving, setIsSaving] = createSignal(false);
 
-  const updateMutation = createMutation(() => ({
+  const updateNameMutation = createMutation(() => ({
     mutationFn: async ({ name }: { name: string }) => {
       await updateDocument({
         documentId: params.documentId,
@@ -70,7 +75,7 @@ export const DocumentPage: Component = () => {
       queryClient.invalidateQueries({
         queryKey: ['organizations', params.organizationId, 'documents', params.documentId],
       });
-      setIsEditing(false);
+      setIsEditingName(false);
       createToast({
         type: 'success',
         message: 'Document name updated successfully',
@@ -111,6 +116,39 @@ export const DocumentPage: Component = () => {
 
   const getDataUrl = () => queries[1].data ? URL.createObjectURL(queries[1].data) : undefined;
 
+  const handleEditContent = () => {
+    setEditedContent(queries[0].data?.document.content ?? '');
+    setIsEditingContent(true);
+  };
+
+  const handleCancelContentEdit = () => {
+    setIsEditingContent(false);
+    setEditedContent('');
+  };
+
+  const handleSaveContent = async () => {
+    if (!queries[0].data?.document) {
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await updateDocumentContent({
+        documentId: queries[0].data.document.id,
+        organizationId: params.organizationId,
+        content: editedContent(),
+      });
+
+      await queries[0].refetch();
+      setIsEditingContent(false);
+      createToast({ type: 'success', message: 'Document content updated' });
+    } catch (_) {
+      createToast({ type: 'error', message: 'Failed to update document content' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div class="p-6 flex gap-6 h-full flex-col md:flex-row max-w-7xl mx-auto">
       <Suspense>
@@ -121,7 +159,7 @@ export const DocumentPage: Component = () => {
                 <div class="flex-1">
                   <div class="flex items-center gap-2">
                     <Show
-                      when={isEditing()}
+                      when={isEditingName()}
                       fallback={(
                         <div class="flex items-center gap-2">
                           <h1 class="text-xl font-semibold">{getDocument().name}</h1>
@@ -130,7 +168,7 @@ export const DocumentPage: Component = () => {
                             size="sm"
                             onClick={() => {
                               setEditName(getDocument().name);
-                              setIsEditing(true);
+                              setIsEditingName(true);
                             }}
                           >
                             <div class="i-tabler-edit size-4" />
@@ -151,9 +189,9 @@ export const DocumentPage: Component = () => {
                           size="sm"
                           class="text-green-500"
                           onClick={() => {
-                            updateMutation.mutate({ name: editName() });
+                            updateNameMutation.mutate({ name: editName() });
                           }}
-                          isLoading={updateMutation.isPending}
+                          isLoading={updateNameMutation.isPending}
                         >
                           <div class="i-tabler-check size-4" />
                         </Button>
@@ -161,7 +199,7 @@ export const DocumentPage: Component = () => {
                           variant="ghost"
                           size="sm"
                           class="text-red-500"
-                          onClick={() => setIsEditing(false)}
+                          onClick={() => setIsEditingName(false)}
                         >
                           <div class="i-tabler-x size-4" />
                         </Button>
@@ -259,41 +297,88 @@ export const DocumentPage: Component = () => {
                     </Alert>
                   )}
 
-                  <Separator class="my-6" />
+                  <Separator class="my-3" />
 
-                  <KeyValues data={[
-                    {
-                      label: 'ID',
-                      value: getDocument().id,
-                      icon: 'i-tabler-id',
-                    },
-                    {
-                      label: 'Name',
-                      value: getDocument().name,
-                      icon: 'i-tabler-file-text',
-                    },
-                    {
-                      label: 'Type',
-                      value: getDocument().mimeType,
-                      icon: 'i-tabler-file-unknown',
-                    },
-                    {
-                      label: 'Size',
-                      value: formatBytes({ bytes: getDocument().originalSize, base: 1000 }),
-                      icon: 'i-tabler-weight',
-                    },
-                    {
-                      label: 'Created At',
-                      value: timeAgo({ date: getDocument().createdAt }),
-                      icon: 'i-tabler-calendar',
-                    },
-                    {
-                      label: 'Updated At',
-                      value: getDocument().updatedAt ? timeAgo({ date: getDocument().updatedAt! }) : <span class="text-muted-foreground">Never</span>,
-                      icon: 'i-tabler-calendar',
-                    },
-                  ]}
-                  />
+                  <Tabs defaultValue="info" class="w-full">
+                    <TabsList class="w-full h-8">
+                      <TabsTrigger value="info">Info</TabsTrigger>
+                      <TabsTrigger value="content">Content</TabsTrigger>
+                      <TabsIndicator />
+                    </TabsList>
+
+                    <TabsContent value="info">
+                      <KeyValues data={[
+                        {
+                          label: 'ID',
+                          value: getDocument().id,
+                          icon: 'i-tabler-id',
+                        },
+                        {
+                          label: 'Name',
+                          value: getDocument().name,
+                          icon: 'i-tabler-file-text',
+                        },
+                        {
+                          label: 'Type',
+                          value: getDocument().mimeType,
+                          icon: 'i-tabler-file-unknown',
+                        },
+                        {
+                          label: 'Size',
+                          value: formatBytes({ bytes: getDocument().originalSize, base: 1000 }),
+                          icon: 'i-tabler-weight',
+                        },
+                        {
+                          label: 'Created At',
+                          value: timeAgo({ date: getDocument().createdAt }),
+                          icon: 'i-tabler-calendar',
+                        },
+                        {
+                          label: 'Updated At',
+                          value: getDocument().updatedAt ? timeAgo({ date: getDocument().updatedAt! }) : <span class="text-muted-foreground">Never</span>,
+                          icon: 'i-tabler-calendar',
+                        },
+                      ]}
+                      />
+                    </TabsContent>
+                    <TabsContent value="content">
+                      <Show
+                        when={isEditingContent()}
+                        fallback={(
+                          <div class="flex flex-col gap-2">
+                            <div class="whitespace-pre-wrap font-mono text-sm bg-muted p-4 rounded-md">
+                              {queries[0].data?.document.content}
+                            </div>
+                            <div class="flex justify-end">
+                              <Button variant="outline" onClick={handleEditContent}>
+                                <div class="i-tabler-edit size-4 mr-2" />
+                                Edit
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      >
+                        <div class="flex flex-col gap-2">
+                          <TextFieldRoot>
+                            <TextArea
+                              value={editedContent()}
+                              onInput={e => setEditedContent(e.currentTarget.value)}
+                              class="font-mono min-h-[200px]"
+                            />
+                          </TextFieldRoot>
+                          <div class="flex justify-end gap-2">
+                            <Button variant="outline" onClick={handleCancelContentEdit} disabled={isSaving()}>
+                              Cancel
+                            </Button>
+                            <Button onClick={handleSaveContent} disabled={isSaving()}>
+                              {isSaving() ? 'Saving...' : 'Save'}
+                            </Button>
+                          </div>
+                        </div>
+                      </Show>
+                    </TabsContent>
+                  </Tabs>
+
                 </div>
               </div>
             )}
